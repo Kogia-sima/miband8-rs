@@ -26,7 +26,7 @@ const _: Uuid = uuid!("00000053-0000-1000-8000-00805f9b34fb");
 const _: Uuid = uuid!("00000055-0000-1000-8000-00805f9b34fb");
 
 const SECRET_KEY: [u8; 16] = [
-    // ****
+    0x37, 0x95, 0x61, 0xdf, 0xa6, 0x36, 0x99, 0xda, 0x5d, 0xaf, 0x61, 0x1e, 0x10, 0x68, 0xf8, 0x54
 ];
 const NONCE: [u8; 16] = [
     140, 210, 82, 3, 45, 85, 214, 149, 233, 195, 235, 140, 127, 46, 186, 180,
@@ -140,6 +140,7 @@ struct MiBand8Device {
 
 async fn find_our_characteristic(device: &Device) -> Result<Option<MiBand8Device>> {
     let uuids = device.uuids().await?.unwrap_or_default();
+    println!("{:?}", uuids);
 
     if uuids.contains(&SERVICE_UUID) {
         println!("    Device provides our service!");
@@ -169,6 +170,8 @@ async fn find_our_characteristic(device: &Device) -> Result<Option<MiBand8Device
                 }));
             }
         }
+    } else {
+        println!("Service UUID Not found!")
     }
 
     Ok(None)
@@ -261,7 +264,7 @@ async fn start(device: MiBand8Device) -> bluer::Result<()> {
     let output = compute_auth_step3(&phone_nonce, &watch_nonce);
     let (decryption_key, encryption_key, decryption_nonce, encryption_nonce) = unpack_64(&output);
 
-    auth_sanity_check(&phone_nonce, &watch_nonce, decryption_key, &watch_hmac);
+    // auth_sanity_check(&phone_nonce, &watch_nonce, decryption_key, &watch_hmac);
 
     let encrypted_nonces = {
         let nonce = join_nonce(&phone_nonce, &watch_nonce);
@@ -286,22 +289,22 @@ async fn start(device: MiBand8Device) -> bluer::Result<()> {
     let command = protocol::Command::decode(&res[4..]).unwrap();
     println!("  <- {command:?}");
 
-    {
-        let msg = find_device_cmd();
-        let msg = msg.encode_to_vec();
-
-        let nonce = build_nonce(encryption_nonce, 1);
-        let nonce = GenericArray::from_slice(&nonce);
-        let encryption_key = GenericArray::from_slice(encryption_key);
-
-        let cipher: Aes128Ccm = ccm::KeyInit::new(encryption_key);
-        let plain = msg.as_ref();
-        let msg = cipher.encrypt(nonce, plain).unwrap();
-
-        let msg = msg_with_header(&msg, true, 1);
-        device.write.write(&msg).await?;
-        wait_for_ack(&mut write_notify).await;
-    }
+    // {
+    //     let msg = find_device_cmd();
+    //     let msg = msg.encode_to_vec();
+    // 
+    //     let nonce = build_nonce(encryption_nonce, 1);
+    //     let nonce = GenericArray::from_slice(&nonce);
+    //     let encryption_key = GenericArray::from_slice(encryption_key);
+    // 
+    //     let cipher: Aes128Ccm = ccm::KeyInit::new(encryption_key);
+    //     let plain = msg.as_ref();
+    //     let msg = cipher.encrypt(nonce, plain).unwrap();
+    // 
+    //     let msg = msg_with_header(&msg, true, 1);
+    //     device.write.write(&msg).await?;
+    //     wait_for_ack(&mut write_notify).await;
+    // }
 
     Ok(())
 }
@@ -457,34 +460,44 @@ async fn main() -> bluer::Result<()> {
 
     env_logger::init();
     let session = bluer::Session::new().await?;
+    println!("{:?}", session.adapter_names().await?);
     let adapter = session.default_adapter().await?;
     adapter.set_powered(true).await?;
 
     // let discover = adapter.discover_devices().await?;
     // pin_mut!(discover);
-    // while let Some(evt) = discover.next().await {}
 
-    let device = adapter.device(Address::new([0xD0, 0x62, 0x2C, 0xF2, 0xD7, 0x80]))?;
-    let service = device.service(256).await?;
-    let read = service.characteristic(259).await?;
-    let write = service.characteristic(262).await?;
-
-    let device = MiBand8Device { read, write };
-
-    println!("Found: {device:#?}");
-    start(device).await.unwrap();
-
-    // match find_our_characteristic(&device).await {
-    //     Ok(Some(char)) => {
-    //         println!("Found: {char:#?}");
-    //         start(char).await.unwrap();
-    //     }
-    //     Ok(None) => (),
-    //     Err(err) => {
-    //         println!("    Device failed: {}", &err);
-    //         let _ = adapter.remove_device(device.address()).await;
+    // while let Some(evt) = discover.next().await {
+    //     println!("{:?}", evt);
+    //     if let AdapterEvent::DeviceAdded(address) = evt {
+    //         if address == mac_address {
+    //             break
+    //         }
     //     }
     // }
+
+    let mac_address = Address::new([0xD0, 0x62, 0x2C, 0x5A, 0x69, 0x05]);
+    let device = adapter.device(mac_address)?;
+    // let service = device.service(256).await?;
+    // let read = service.characteristic(259).await?;
+    // let write = service.characteristic(262).await?;
+
+    // let device = MiBand8Device { read, write };
+
+    // println!("Found: {device:#?}");
+    // start(device).await.unwrap();
+
+    match find_our_characteristic(&device).await {
+        Ok(Some(char)) => {
+            println!("Found: {char:#?}");
+            start(char).await.unwrap();
+        }
+        Ok(None) => (),
+        Err(err) => {
+            println!("    Device failed: {}", &err);
+            let _ = adapter.remove_device(device.address()).await;
+        }
+    }
 
     // {
     //     println!(
